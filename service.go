@@ -80,7 +80,6 @@ func (client *Client) refreshToken() error {
 	values.Set("grant_type", "refresh_token")
 	values.Set("refresh_token", client.authorizationResponse.RefreshToken)
 
-	fmt.Println(basePath+"/oauth/token", values)
 	resp, err := client.httpClient.PostForm(basePath+"/oauth/token", values)
 	if err != nil {
 		return err
