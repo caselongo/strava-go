@@ -122,12 +122,7 @@ func (client *Client) refreshToken() error {
 
 	client.authorizationResponse = &response
 
-	err = client.tokenSource.SaveAuthorizationResponse(&response)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return client.tokenSource.SaveAuthorizationResponse(&response)
 }
 
 // NewClient builds a normal client for making requests to the strava api.

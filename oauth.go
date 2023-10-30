@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,14 +12,23 @@ import (
 
 // An OAuthAuthenticator holds state about how OAuth requests should be authenticated.
 type OAuthAuthenticator struct {
-	CallbackURL string // used to help generate the AuthorizationURL
+	tokenSource TokenSource
 
-	// The RequestClientGenerator builds the http.Client that will be used
+	callbackUrl string // used to help generate the AuthorizationURL
+
+	// The requestClientGenerator builds the http.Client that will be used
 	// to complete the token exchange. If nil, http.DefaultClient will be used.
 	// On Google's App Engine http.DefaultClient is not available and this generator
 	// can be used to create a client using the incoming request, for Example:
 	//    func(r *http.Request) { return urlfetch.Client(appengine.NewContext(r)) }
-	RequestClientGenerator func(r *http.Request) *http.Client
+	requestClientGenerator func(r *http.Request) *http.Client
+}
+
+func NewOAuthAuthenticator(tokenSource TokenSource, callbackUrl string) (*OAuthAuthenticator, error) {
+	return &OAuthAuthenticator{
+		tokenSource: tokenSource,
+		callbackUrl: callbackUrl,
+	}, nil
 }
 
 // Scope represents the access of an access_token.
@@ -47,28 +56,28 @@ type AuthorizationResponse struct {
 	Athlete      *AthleteDetailed `json:"athlete"`
 }
 
-// CallbackPath returns the path portion of the CallbackURL.
+// CallbackPath returns the path portion of the callbackUrl.
 // Useful when setting a http path handler, for example:
 //
-//	http.HandleFunc(stravaOAuth.CallbackURL(), stravaOAuth.HandlerFunc(successCallback, failureCallback))
+//	http.HandleFunc(stravaOAuth.callbackUrl(), stravaOAuth.HandlerFunc(successCallback, failureCallback))
 func (auth OAuthAuthenticator) CallbackPath() (string, error) {
-	if auth.CallbackURL == "" {
+	if auth.callbackUrl == "" {
 		return "", errors.New("callbackURL is empty")
 	}
-	url, err := url.Parse(auth.CallbackURL)
+	callbackUrl, err := url.Parse(auth.callbackUrl)
 	if err != nil {
 		return "", err
 	}
-	return url.Path, nil
+	return callbackUrl.Path, nil
 }
 
 // Authorize performs the second part of the OAuth exchange. The client has already been redirected to the
 // Strava authorization page, has granted authorization to the application and has been redirected back to the
 // defined URL. The code param was returned as a query string param in to the redirect_url.
-func (auth OAuthAuthenticator) Authorize(code string, client *http.Client) (*AuthorizationResponse, error) {
+func (auth OAuthAuthenticator) Authorize(code string, client *http.Client) error {
 	// make sure a code was passed
 	if code == "" {
-		return nil, OAuthInvalidCodeErr
+		return OAuthInvalidCodeErr
 	}
 
 	// if a client wasn't passed use the default client
@@ -81,51 +90,54 @@ func (auth OAuthAuthenticator) Authorize(code string, client *http.Client) (*Aut
 
 	// this was a poor request, maybe strava servers down?
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
 
 	// check status code, could be 500, or most likely the client_secret is incorrect
 	if resp.StatusCode/100 == 5 {
-		return nil, OAuthServerErr
+		return OAuthServerErr
 	}
 
 	if resp.StatusCode/100 != 2 {
 		var response Error
-		contents, _ := ioutil.ReadAll(resp.Body)
-		json.Unmarshal(contents, &response)
+		contents, _ := io.ReadAll(resp.Body)
+		err = json.Unmarshal(contents, &response)
+		if err != nil {
+			return err
+		}
 
 		if len(response.Errors) == 0 {
-			return nil, OAuthServerErr
+			return OAuthServerErr
 		}
 
 		if response.Errors[0].Resource == "Application" {
-			return nil, OAuthInvalidCredentialsErr
+			return OAuthInvalidCredentialsErr
 		}
 
 		if response.Errors[0].Resource == "RequestToken" {
-			return nil, OAuthInvalidCodeErr
+			return OAuthInvalidCodeErr
 		}
 
-		return nil, &response
+		return &response
 	}
 
 	var response AuthorizationResponse
-	contents, _ := ioutil.ReadAll(resp.Body)
+	contents, _ := io.ReadAll(resp.Body)
 	err = json.Unmarshal(contents, &response)
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &response, nil
+	return auth.tokenSource.SaveAuthorizationResponse(&response)
 }
 
 // HandlerFunc builds a http.HandlerFunc that will complete the token exchange
 // after a user authorizes an application on strava.com.
 // This method handles the exchange and calls success or failure after it completes.
 func (auth OAuthAuthenticator) HandlerFunc(
-	success func(auth *AuthorizationResponse, w http.ResponseWriter, r *http.Request),
+	success func(w http.ResponseWriter, r *http.Request),
 	failure func(err error, w http.ResponseWriter, r *http.Request)) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -137,20 +149,16 @@ func (auth OAuthAuthenticator) HandlerFunc(
 
 		// use the client generator if provided.
 		client := http.DefaultClient
-		if auth.RequestClientGenerator != nil {
-			client = auth.RequestClientGenerator(r)
+		if auth.requestClientGenerator != nil {
+			client = auth.requestClientGenerator(r)
 		}
 
-		resp, err := auth.Authorize(r.FormValue("code"), client)
-
+		err := auth.Authorize(r.FormValue("code"), client)
 		if err != nil {
 			failure(err, w, r)
 			return
 		}
-
-		resp.State = r.FormValue("state")
-
-		success(resp, w, r)
+		success(w, r)
 	}
 }
 
@@ -161,7 +169,7 @@ func (auth OAuthAuthenticator) AuthorizationURL(state string, scopes []Scope, fo
 		s = append(s, string(scope))
 	}
 
-	path := fmt.Sprintf("%s/oauth/authorize?client_id=%d&response_type=code&redirect_uri=%s&scope=%v", basePath, ClientId, auth.CallbackURL, strings.Join(s, ","))
+	path := fmt.Sprintf("%s/oauth/authorize?client_id=%d&response_type=code&redirect_uri=%s&scope=%v", basePath, ClientId, auth.callbackUrl, strings.Join(s, ","))
 
 	if state != "" {
 		path += "&state=" + state

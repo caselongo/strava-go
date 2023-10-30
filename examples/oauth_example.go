@@ -45,11 +45,11 @@ func main() {
 
 	// define a strava.OAuthAuthenticator to hold state.
 	// The callback url is used to generate an AuthorizationURL.
-	// The RequestClientGenerator can be used to generate an http.RequestClient.
+	// The requestClientGenerator can be used to generate an http.RequestClient.
 	// This is usually when running on the Google App Engine platform.
 	authenticator = &strava.OAuthAuthenticator{
-		CallbackURL:            fmt.Sprintf("http://localhost:%d/exchange_token", port),
-		RequestClientGenerator: nil,
+		callbackUrl:            fmt.Sprintf("http://localhost:%d/exchange_token", port),
+		requestClientGenerator: nil,
 	}
 
 	http.HandleFunc("/", indexHandler)
