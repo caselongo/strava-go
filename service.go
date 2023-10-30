@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 var ClientId int
@@ -17,9 +18,9 @@ const basePath = "https://www.strava.com/api/v3"
 const timeFormat = "2006-01-02T15:04:05Z"
 
 type Client struct {
-	tokenSource           TokenSource
-	authorizationResponse *AuthorizationResponse
-	httpClient            *http.Client
+	tokenSource TokenSource
+	//authorizationResponse *AuthorizationResponse
+	httpClient *http.Client
 }
 
 type ErrorHandler func(*http.Response) error
@@ -49,45 +50,45 @@ var defaultErrorHandler ErrorHandler = func(resp *http.Response) error {
 
 // validateToken validates the current token provided by TokenSource.
 // if retrieves the token if it not already did and refreshes the token if it has expired
-func (client *Client) validateToken() error {
-	if client.authorizationResponse == nil {
-		authorizationResponse, err := client.tokenSource.GetAuthorizationResponse()
-		if err != nil {
-			return err
-		}
-
-		client.authorizationResponse = authorizationResponse
+func (client *Client) validateToken() (*AuthorizationResponse, error) {
+	authorizationResponse, err := client.tokenSource.GetAuthorizationResponse()
+	if err != nil {
+		return nil, err
 	}
 
-	if client.authorizationResponse.AccessToken == "" {
-		return errors.New("accesstoken is empty string")
+	if authorizationResponse.AccessToken == "" {
+		return nil, errors.New("accesstoken is empty string")
 	}
 
-	/*
-		expiresAt := time.UnixMicro(client.authorizationResponse.ExpiresAt * 1000)
-		if expiresAt.After(time.Now().Add(10 * time.Second)) {
-			return nil
-		}*/
+	expiresAt := time.UnixMicro(authorizationResponse.ExpiresAt * 1000)
+	if expiresAt.After(time.Now().Add(10 * time.Second)) {
+		return authorizationResponse, nil
+	}
 
 	return client.refreshToken()
 }
 
 // refreshToken refreshes the token if it has expired
-func (client *Client) refreshToken() error {
+func (client *Client) refreshToken() (*AuthorizationResponse, error) {
+	authorizationResponse, err := client.tokenSource.GetAuthorizationResponse()
+	if err != nil {
+		return nil, err
+	}
+
 	values := make(url.Values)
 	values.Set("client_id", fmt.Sprintf("%d", ClientId))
 	values.Set("client_secret", ClientSecret)
 	values.Set("grant_type", "refresh_token")
-	values.Set("refresh_token", client.authorizationResponse.RefreshToken)
+	values.Set("refresh_token", authorizationResponse.RefreshToken)
 
 	resp, err := client.httpClient.PostForm(basePath+"/oauth/token", values)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// check status code, could be 500, or most likely the client_secret is incorrect
 	if resp.StatusCode/100 == 5 {
-		return OAuthServerErr
+		return nil, OAuthServerErr
 	}
 
 	if resp.StatusCode/100 != 2 {
@@ -95,34 +96,37 @@ func (client *Client) refreshToken() error {
 		contents, _ := io.ReadAll(resp.Body)
 		err := json.Unmarshal(contents, &response)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if len(response.Errors) == 0 {
-			return OAuthServerErr
+			return nil, OAuthServerErr
 		}
 
 		if response.Errors[0].Resource == "Application" {
-			return OAuthInvalidCredentialsErr
+			return nil, OAuthInvalidCredentialsErr
 		}
 
 		if response.Errors[0].Resource == "RequestToken" {
-			return OAuthInvalidCodeErr
+			return nil, OAuthInvalidCodeErr
 		}
 
-		return &response
+		return nil, &response
 	}
 
-	var response AuthorizationResponse
+	var newAuthorizationResponse AuthorizationResponse
 	contents, _ := io.ReadAll(resp.Body)
-	err = json.Unmarshal(contents, &response)
+	err = json.Unmarshal(contents, &newAuthorizationResponse)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	client.authorizationResponse = &response
+	err = client.tokenSource.SaveAuthorizationResponse(&newAuthorizationResponse)
+	if err != nil {
+		return nil, err
+	}
 
-	return client.tokenSource.SaveAuthorizationResponse(&response)
+	return &newAuthorizationResponse, nil
 }
 
 // NewClient builds a normal client for making requests to the strava api.
@@ -194,12 +198,12 @@ func (client *Client) run(method, path string, params map[string]interface{}) ([
 }
 
 func (client *Client) runRequestWithErrorHandler(req *http.Request, errorHandler ErrorHandler) ([]byte, error) {
-	err := client.validateToken()
+	authorizationResponse, err := client.validateToken()
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+client.authorizationResponse.AccessToken)
+	req.Header.Set("Authorization", "Bearer "+authorizationResponse.AccessToken)
 	req.Header.Set("User-Agent", "caselongo/strava-go")
 	resp, err := client.httpClient.Do(req)
 

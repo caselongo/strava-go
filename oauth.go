@@ -24,6 +24,7 @@ type OAuthAuthenticator struct {
 	requestClientGenerator func(r *http.Request) *http.Client
 }
 
+// NewOAuthAuthenticator creates a new OAuthAuthenticator instance.
 func NewOAuthAuthenticator(tokenSource TokenSource, callbackUrl string) (*OAuthAuthenticator, error) {
 	return &OAuthAuthenticator{
 		tokenSource: tokenSource,

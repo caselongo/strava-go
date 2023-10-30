@@ -13,7 +13,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/caselongo/strava-go"
@@ -47,9 +46,11 @@ func main() {
 	// The callback url is used to generate an AuthorizationURL.
 	// The requestClientGenerator can be used to generate an http.RequestClient.
 	// This is usually when running on the Google App Engine platform.
-	authenticator = &strava.OAuthAuthenticator{
-		callbackUrl:            fmt.Sprintf("http://localhost:%d/exchange_token", port),
-		requestClientGenerator: nil,
+	authenticator, err := strava.NewOAuthAuthenticator(&StaticTokenSource{}, fmt.Sprintf("http://localhost:%d/exchange_token", port))
+	if err != nil {
+		// possibly that the callback url set above is invalid
+		fmt.Println(err)
+		os.Exit(1)
 	}
 
 	http.HandleFunc("/", indexHandler)
@@ -76,14 +77,8 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, `</a>`)
 }
 
-func oAuthSuccess(auth *strava.AuthorizationResponse, w http.ResponseWriter, r *http.Request) {
+func oAuthSuccess(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "SUCCESS:\nAt this point you can use this information to create a new user or link the account to one of your existing users\n")
-	fmt.Fprintf(w, "State: %s\n\n", auth.State)
-	fmt.Fprintf(w, "Access Token: %s\n\n", auth.AccessToken)
-
-	fmt.Fprintf(w, "The Authenticated Athlete (you):\n")
-	content, _ := json.MarshalIndent(auth.Athlete, "", " ")
-	fmt.Fprint(w, string(content))
 }
 
 func oAuthFailure(err error, w http.ResponseWriter, r *http.Request) {
