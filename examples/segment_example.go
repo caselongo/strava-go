@@ -36,7 +36,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := strava.NewClient(accessToken)
+	client := strava.NewClient(StaticTokenSource{})
 
 	fmt.Printf("Fetching segment %d info...\n", segmentId)
 	segment, err := strava.NewSegmentsService(client).Get(segmentId).Do()

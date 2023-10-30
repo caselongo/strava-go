@@ -71,7 +71,7 @@ func main() {
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
 	// you should make this a template in your real application
-	fmt.Fprintf(w, `<a href="%s">`, authenticator.AuthorizationURL("state1", strava.Permissions.Public, true))
+	fmt.Fprintf(w, `<a href="%s">`, authenticator.AuthorizationURL("state1", []strava.Scope{strava.ScopeRead}, true))
 	fmt.Fprint(w, `<img src="http://strava.github.io/api/images/ConnectWithStrava.png" />`)
 	fmt.Fprint(w, `</a>`)
 }

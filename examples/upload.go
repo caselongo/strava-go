@@ -39,7 +39,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := strava.NewClient(accessToken)
+	client := strava.NewClient(StaticTokenSource{})
 	service := strava.NewUploadsService(client)
 
 	fmt.Printf("Uploading data...\n")
