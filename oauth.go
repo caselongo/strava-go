@@ -53,8 +53,8 @@ type AuthorizationResponse struct {
 	ExpiresIn    int64            `json:"expires_in"`
 	RefreshToken string           `json:"refresh_token"`
 	AccessToken  string           `json:"access_token"`
-	State        string           `json:"State"`
-	Athlete      *AthleteDetailed `json:"athlete"`
+	State        string           `json:"state,omitempty"`
+	Athlete      *AthleteDetailed `json:"athlete,omitempty"`
 }
 
 // CallbackPath returns the path portion of the callbackUrl.
@@ -75,7 +75,7 @@ func (auth OAuthAuthenticator) CallbackPath() (string, error) {
 // Authorize performs the second part of the OAuth exchange. The client has already been redirected to the
 // Strava authorization page, has granted authorization to the application and has been redirected back to the
 // defined URL. The code param was returned as a query string param in to the redirect_url.
-func (auth OAuthAuthenticator) Authorize(code string, client *http.Client) error {
+func (auth OAuthAuthenticator) Authorize(code string, state string, client *http.Client) error {
 	// make sure a code was passed
 	if code == "" {
 		return OAuthInvalidCodeErr
@@ -126,10 +126,11 @@ func (auth OAuthAuthenticator) Authorize(code string, client *http.Client) error
 	var response AuthorizationResponse
 	contents, _ := io.ReadAll(resp.Body)
 	err = json.Unmarshal(contents, &response)
-
 	if err != nil {
 		return err
 	}
+
+	response.State = state
 
 	return auth.tokenSource.SaveAuthorizationResponse(&response)
 }
@@ -154,7 +155,7 @@ func (auth OAuthAuthenticator) HandlerFunc(
 			client = auth.requestClientGenerator(r)
 		}
 
-		err := auth.Authorize(r.FormValue("code"), client)
+		err := auth.Authorize(r.FormValue("code"), r.FormValue("state"), client)
 		if err != nil {
 			failure(err, w, r)
 			return
