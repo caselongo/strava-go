@@ -121,7 +121,7 @@ func (client *Client) refreshToken() (*AuthorizationResponse, error) {
 		return nil, err
 	}
 
-	err = client.tokenSource.SaveAuthorizationResponse(&newAuthorizationResponse)
+	err = client.tokenSource.SaveAuthorizationResponse("", &newAuthorizationResponse)
 	if err != nil {
 		return nil, err
 	}

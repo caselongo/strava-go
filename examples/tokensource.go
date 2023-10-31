@@ -10,6 +10,6 @@ func (tokenSource *StaticTokenSource) GetAuthorizationResponse() (*strava.Author
 	}, nil
 }
 
-func (tokenSource *StaticTokenSource) SaveAuthorizationResponse(a *strava.AuthorizationResponse) error {
+func (tokenSource *StaticTokenSource) SaveAuthorizationResponse(s string, a *strava.AuthorizationResponse) error {
 	return nil
 }

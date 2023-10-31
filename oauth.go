@@ -53,7 +53,6 @@ type AuthorizationResponse struct {
 	ExpiresIn    int64            `json:"expires_in"`
 	RefreshToken string           `json:"refresh_token"`
 	AccessToken  string           `json:"access_token"`
-	State        string           `json:"state,omitempty"`
 	Athlete      *AthleteDetailed `json:"athlete,omitempty"`
 }
 
@@ -130,9 +129,7 @@ func (auth OAuthAuthenticator) Authorize(code string, state string, client *http
 		return err
 	}
 
-	response.State = state
-
-	return auth.tokenSource.SaveAuthorizationResponse(&response)
+	return auth.tokenSource.SaveAuthorizationResponse(state, &response)
 }
 
 // HandlerFunc builds a http.HandlerFunc that will complete the token exchange
