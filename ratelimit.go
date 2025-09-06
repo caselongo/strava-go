@@ -1,6 +1,7 @@
 package strava
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -8,37 +9,63 @@ import (
 	"time"
 )
 
+const (
+	windowShortMinutes = 15
+)
+
 // RateLimit is the struct used for the `RateLimiting` global that is
 // updated after every request.
 type RateLimit struct {
-	lock        sync.RWMutex
-	RequestTime time.Time
-	LimitShort  int
-	LimitLong   int
-	UsageShort  int
-	UsageLong   int
+	lock          sync.RWMutex
+	RequestTime   time.Time
+	WindowShort   string
+	WindowLong    string
+	LimitShort    int
+	LimitLong     int
+	UsageShort    int
+	UsageLong     int
+	UsageReserved int
 }
-
-// RateLimiting stores rate limit information included in the most recent request.
-// Request time will be zero for invalid, or not yet set results.
-// Admittedly having a globally updated ratelimit value is a bit clunky. // TODO: fix
-var RateLimiting RateLimit
 
 // Exceeded should be called as `strava.RateLimiting.Exceeded() to determine if the most recent
 // request exceeded the rate limit
+// If the rate limit is not exceeded, 1 unit is reserved for the call you are going to execute.
+// In that case you should call the Reserved-function by defer.
 func (rl *RateLimit) Exceeded() bool {
 	rl.lock.RLock()
 	defer rl.lock.RUnlock()
 
-	if rl.UsageShort >= rl.LimitShort {
-		return true
+	exceeded := false
+
+	now := time.Now()
+	minute := now.Minute()
+	currentWindowShort := fmt.Sprintf("%v-%v", now.Hour(), minute-minute%windowShortMinutes)
+	currentWindowLong := now.Format("2006-01-02")
+
+	if currentWindowShort != rl.WindowShort {
+		rl.WindowShort = currentWindowShort
+		rl.UsageShort = 0
 	}
 
-	if rl.UsageLong >= rl.LimitLong {
-		return true
+	if currentWindowLong != rl.WindowLong {
+		rl.WindowLong = currentWindowLong
+		rl.UsageLong = 0
 	}
 
-	return false
+	if !rl.RequestTime.IsZero() {
+		if rl.UsageShort+rl.UsageReserved >= rl.LimitShort {
+			exceeded = true
+		} else if rl.UsageLong+rl.UsageReserved >= rl.LimitLong {
+			exceeded = true
+		}
+	}
+
+	if !exceeded {
+		rl.UsageReserved++
+	}
+
+	// fmt.Printf("Limit for window %s: %v+%v/%v, %v+%v/%v\n", rl.WindowShort, rl.UsageShort, rl.UsageReserved, rl.LimitShort, rl.UsageLong, rl.UsageReserved, rl.LimitLong)
+	return exceeded
 }
 
 // FractionReached returns the current faction of rate used. The greater of the
@@ -47,8 +74,8 @@ func (rl *RateLimit) FractionReached() float32 {
 	rl.lock.RLock()
 	defer rl.lock.RUnlock()
 
-	var shortLimitFraction float32 = float32(rl.UsageShort) / float32(rl.LimitShort)
-	var longLimitFraction float32 = float32(rl.UsageLong) / float32(rl.LimitLong)
+	var shortLimitFraction = float32(rl.UsageShort) / float32(rl.LimitShort)
+	var longLimitFraction = float32(rl.UsageLong) / float32(rl.LimitLong)
 
 	if shortLimitFraction > longLimitFraction {
 		return shortLimitFraction
@@ -64,12 +91,12 @@ func (rl *RateLimit) updateRateLimits(resp *http.Response) {
 
 	var err error
 
-	if resp.Header.Get("X-Ratelimit-Limit") == "" || resp.Header.Get("X-Ratelimit-Usage") == "" {
+	if resp.Header.Get("X-ReadRatelimit-Limit") == "" || resp.Header.Get("X-ReadRatelimit-Usage") == "" {
 		rl.clear()
 		return
 	}
 
-	s := strings.Split(resp.Header.Get("X-Ratelimit-Limit"), ",")
+	s := strings.Split(resp.Header.Get("X-ReadRatelimit-Limit"), ",")
 	if rl.LimitShort, err = strconv.Atoi(s[0]); err != nil {
 		rl.clear()
 		return
@@ -79,7 +106,7 @@ func (rl *RateLimit) updateRateLimits(resp *http.Response) {
 		return
 	}
 
-	s = strings.Split(resp.Header.Get("X-Ratelimit-Usage"), ",")
+	s = strings.Split(resp.Header.Get("X-ReadRatelimit-Usage"), ",")
 	if rl.UsageShort, err = strconv.Atoi(s[0]); err != nil {
 		rl.clear()
 		return
@@ -96,8 +123,17 @@ func (rl *RateLimit) updateRateLimits(resp *http.Response) {
 
 func (rl *RateLimit) clear() {
 	rl.RequestTime = time.Time{}
+	rl.WindowShort = ""
+	rl.WindowLong = ""
 	rl.LimitShort = 0
 	rl.LimitLong = 0
 	rl.UsageShort = 0
 	rl.UsageLong = 0
+}
+
+func (rl *RateLimit) Reserved() {
+	rl.lock.RLock()
+	defer rl.lock.RUnlock()
+
+	rl.UsageReserved--
 }

@@ -19,8 +19,8 @@ const timeFormat = "2006-01-02T15:04:05Z"
 
 type Client struct {
 	tokenSource TokenSource
-	//authorizationResponse *AuthorizationResponse
-	httpClient *http.Client
+	httpClient  *http.Client
+	rateLimit   *RateLimit
 }
 
 type ErrorHandler func(*http.Response) error
@@ -138,6 +138,8 @@ func NewClient(tokenSource TokenSource, client ...*http.Client) *Client {
 	} else {
 		c.httpClient = http.DefaultClient
 	}
+
+	c.rateLimit = &RateLimit{}
 	return c
 }
 
@@ -198,14 +200,35 @@ func (client *Client) run(method, path string, params map[string]interface{}) ([
 }
 
 func (client *Client) runRequestWithErrorHandler(req *http.Request, errorHandler ErrorHandler) ([]byte, error) {
+retry:
+	
+	if client.rateLimit.Exceeded() {
+		windowSizeMinutes := 15
+		windowSizeSeconds := windowSizeMinutes * 60
+		waitSeconds := 5 + windowSizeSeconds - (time.Now().Minute()*60+time.Now().Second())%windowSizeSeconds
+		fmt.Printf("Waiting %v seconds\n", waitSeconds)
+
+		time.Sleep(time.Duration(waitSeconds) * time.Second)
+		goto retry
+	}
+
+	defer client.rateLimit.Reserved()
+
 	authorizationResponse, err := client.validateToken()
 	if err != nil {
-		return nil, err
+		return nil, errors.New(fmt.Sprintf("error from validateToken: %s", err.Error()))
 	}
 
 	req.Header.Set("Authorization", "Bearer "+authorizationResponse.AccessToken)
 	req.Header.Set("User-Agent", "caselongo/strava-go")
 	resp, err := client.httpClient.Do(req)
+
+	if resp != nil {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			client.rateLimit.updateRateLimits(resp)
+			goto retry
+		}
+	}
 
 	// this was a poor request, maybe strava servers down?
 	if err != nil {
@@ -214,7 +237,7 @@ func (client *Client) runRequestWithErrorHandler(req *http.Request, errorHandler
 
 	defer resp.Body.Close()
 
-	RateLimiting.updateRateLimits(resp)
+	client.rateLimit.updateRateLimits(resp)
 
 	return checkResponseForErrorsWithErrorHandler(resp, errorHandler)
 }
