@@ -11,8 +11,11 @@ import (
 	"time"
 )
 
+// This Repo runs in the context of a specific Strava App (=ClientId)
+// Therefore, current rate-limit number are global as well
 var ClientId int
 var ClientSecret string
+var rateLimit = &RateLimit{}
 
 const basePath = "https://www.strava.com/api/v3"
 const timeFormat = "2006-01-02T15:04:05Z"
@@ -20,7 +23,6 @@ const timeFormat = "2006-01-02T15:04:05Z"
 type Client struct {
 	tokenSource TokenSource
 	httpClient  *http.Client
-	rateLimit   *RateLimit
 }
 
 type ErrorHandler func(*http.Response) error
@@ -138,8 +140,6 @@ func NewClient(tokenSource TokenSource, client ...*http.Client) *Client {
 	} else {
 		c.httpClient = http.DefaultClient
 	}
-
-	c.rateLimit = &RateLimit{}
 	return c
 }
 
@@ -202,7 +202,7 @@ func (client *Client) run(method, path string, params map[string]interface{}) ([
 func (client *Client) runRequestWithErrorHandler(req *http.Request, errorHandler ErrorHandler) ([]byte, error) {
 retry:
 
-	waitSeconds := client.rateLimit.ExceededAndClaim()
+	waitSeconds := rateLimit.ExceededAndClaim()
 	if waitSeconds > 0 {
 		fmt.Printf("Waiting %v seconds\n", waitSeconds)
 
@@ -210,7 +210,7 @@ retry:
 		goto retry
 	}
 
-	defer client.rateLimit.Unclaim()
+	defer rateLimit.Unclaim()
 
 	authorizationResponse, err := client.validateToken()
 	if err != nil {
@@ -223,7 +223,7 @@ retry:
 
 	if resp != nil {
 		if resp.StatusCode == http.StatusTooManyRequests {
-			client.rateLimit.updateRateLimits(resp)
+			rateLimit.updateRateLimits(resp)
 			goto retry
 		}
 	}
@@ -235,7 +235,7 @@ retry:
 
 	defer resp.Body.Close()
 
-	client.rateLimit.updateRateLimits(resp)
+	rateLimit.updateRateLimits(resp)
 
 	return checkResponseForErrorsWithErrorHandler(resp, errorHandler)
 }
