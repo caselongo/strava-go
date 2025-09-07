@@ -1,6 +1,7 @@
 package strava
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -8,37 +9,62 @@ import (
 	"time"
 )
 
+const (
+	windowShortMinutes = 15
+)
+
 // RateLimit is the struct used for the `RateLimiting` global that is
 // updated after every request.
 type RateLimit struct {
-	lock        sync.RWMutex
-	RequestTime time.Time
-	LimitShort  int
-	LimitLong   int
-	UsageShort  int
-	UsageLong   int
+	lock         sync.RWMutex
+	RequestTime  time.Time
+	WindowShort  string
+	WindowLong   string
+	LimitShort   int
+	LimitLong    int
+	UsageShort   int
+	UsageLong    int
+	UsageClaimed int
 }
 
-// RateLimiting stores rate limit information included in the most recent request.
-// Request time will be zero for invalid, or not yet set results.
-// Admittedly having a globally updated ratelimit value is a bit clunky. // TODO: fix
-var RateLimiting RateLimit
-
-// Exceeded should be called as `strava.RateLimiting.Exceeded() to determine if the most recent
-// request exceeded the rate limit
-func (rl *RateLimit) Exceeded() bool {
+// ExceededAndClaim should be called as `strava.RateLimiting.ExceededAndClaim() to determine if the most recent
+// request exceeded the rate limit. The function returns the number of seconds to wait for the rate-limit to be released again.
+// If the rate limit is not exceeded, directly claim 1 rate-limit unit for the actual APi call you are going to execute.
+// When that API call has finished, unclaim the unit by calling the Unclaim function.
+// This is necessary if we do parallel calls to the client.
+// Otherwise, in the time between the Exceeded function returned false and the actual execution of the API call, the rate-limit could have reached the Exceeded state, so that we get a 429 response, although Exceeded returned false a fraction earlier.
+func (rl *RateLimit) ExceededAndClaim() int {
 	rl.lock.RLock()
 	defer rl.lock.RUnlock()
 
-	if rl.UsageShort >= rl.LimitShort {
-		return true
+	nowUtc := time.Now().UTC()
+	minute := nowUtc.Minute()
+	currentWindowShort := fmt.Sprintf("%v-%v", nowUtc.Hour(), minute-minute%windowShortMinutes)
+	currentWindowLong := nowUtc.Format("2006-01-02")
+
+	if currentWindowShort != rl.WindowShort {
+		rl.WindowShort = currentWindowShort
+		rl.UsageShort = 0
 	}
 
-	if rl.UsageLong >= rl.LimitLong {
-		return true
+	if currentWindowLong != rl.WindowLong {
+		rl.WindowLong = currentWindowLong
+		rl.UsageLong = 0
 	}
 
-	return false
+	if !rl.RequestTime.IsZero() {
+		if rl.UsageShort+rl.UsageClaimed >= rl.LimitShort {
+			windowShortSeconds := windowShortMinutes * 60
+			return 5 + windowShortSeconds - (nowUtc.Minute()*60+nowUtc.Second())%windowShortSeconds
+		} else if rl.UsageLong+rl.UsageClaimed >= rl.LimitLong {
+			return 5 + 24*60*60 - (nowUtc.Hour()*60*60 + nowUtc.Minute()*60 + nowUtc.Second())
+		}
+	}
+
+	rl.UsageClaimed++
+
+	//fmt.Printf("Limit for window %s: %v+%v/%v, %v+%v/%v\n", rl.WindowShort, rl.UsageShort, rl.UsageClaimed, rl.LimitShort, rl.UsageLong, rl.UsageClaimed, rl.LimitLong)
+	return 0
 }
 
 // FractionReached returns the current faction of rate used. The greater of the
@@ -47,8 +73,8 @@ func (rl *RateLimit) FractionReached() float32 {
 	rl.lock.RLock()
 	defer rl.lock.RUnlock()
 
-	var shortLimitFraction float32 = float32(rl.UsageShort) / float32(rl.LimitShort)
-	var longLimitFraction float32 = float32(rl.UsageLong) / float32(rl.LimitLong)
+	var shortLimitFraction = float32(rl.UsageShort) / float32(rl.LimitShort)
+	var longLimitFraction = float32(rl.UsageLong) / float32(rl.LimitLong)
 
 	if shortLimitFraction > longLimitFraction {
 		return shortLimitFraction
@@ -64,12 +90,12 @@ func (rl *RateLimit) updateRateLimits(resp *http.Response) {
 
 	var err error
 
-	if resp.Header.Get("X-Ratelimit-Limit") == "" || resp.Header.Get("X-Ratelimit-Usage") == "" {
+	if resp.Header.Get("X-ReadRatelimit-Limit") == "" || resp.Header.Get("X-ReadRatelimit-Usage") == "" {
 		rl.clear()
 		return
 	}
 
-	s := strings.Split(resp.Header.Get("X-Ratelimit-Limit"), ",")
+	s := strings.Split(resp.Header.Get("X-ReadRatelimit-Limit"), ",")
 	if rl.LimitShort, err = strconv.Atoi(s[0]); err != nil {
 		rl.clear()
 		return
@@ -79,7 +105,7 @@ func (rl *RateLimit) updateRateLimits(resp *http.Response) {
 		return
 	}
 
-	s = strings.Split(resp.Header.Get("X-Ratelimit-Usage"), ",")
+	s = strings.Split(resp.Header.Get("X-ReadRatelimit-Usage"), ",")
 	if rl.UsageShort, err = strconv.Atoi(s[0]); err != nil {
 		rl.clear()
 		return
@@ -96,8 +122,17 @@ func (rl *RateLimit) updateRateLimits(resp *http.Response) {
 
 func (rl *RateLimit) clear() {
 	rl.RequestTime = time.Time{}
+	rl.WindowShort = ""
+	rl.WindowLong = ""
 	rl.LimitShort = 0
 	rl.LimitLong = 0
 	rl.UsageShort = 0
 	rl.UsageLong = 0
+}
+
+func (rl *RateLimit) Unclaim() {
+	rl.lock.RLock()
+	defer rl.lock.RUnlock()
+
+	rl.UsageClaimed--
 }
