@@ -50,14 +50,14 @@ func TestRateLimitExceeded(t *testing.T) {
 	ratelimit.LimitShort = 100
 	ratelimit.UsageShort = 200
 
-	if ratelimit.Exceeded() != true {
+	if ratelimit.ExceededAndClaim() != true {
 		t.Errorf("should have exceeded rate limit")
 	}
 
 	ratelimit.LimitShort = 200
 	ratelimit.UsageShort = 100
 
-	if ratelimit.Exceeded() == true {
+	if ratelimit.ExceededAndClaim() == true {
 		t.Errorf("should not have exceeded rate limit")
 	}
 
@@ -66,14 +66,14 @@ func TestRateLimitExceeded(t *testing.T) {
 	ratelimit.LimitLong = 100
 	ratelimit.UsageLong = 200
 
-	if ratelimit.Exceeded() != true {
+	if ratelimit.ExceededAndClaim() != true {
 		t.Errorf("should have exceeded rate limit")
 	}
 
 	ratelimit.LimitLong = 200
 	ratelimit.UsageLong = 100
 
-	if ratelimit.Exceeded() == true {
+	if ratelimit.ExceededAndClaim() == true {
 		t.Errorf("should not have exceeded rate limit")
 	}
 }

@@ -201,18 +201,16 @@ func (client *Client) run(method, path string, params map[string]interface{}) ([
 
 func (client *Client) runRequestWithErrorHandler(req *http.Request, errorHandler ErrorHandler) ([]byte, error) {
 retry:
-	
-	if client.rateLimit.Exceeded() {
-		windowSizeMinutes := 15
-		windowSizeSeconds := windowSizeMinutes * 60
-		waitSeconds := 5 + windowSizeSeconds - (time.Now().Minute()*60+time.Now().Second())%windowSizeSeconds
+
+	waitSeconds := client.rateLimit.ExceededAndClaim()
+	if waitSeconds > 0 {
 		fmt.Printf("Waiting %v seconds\n", waitSeconds)
 
 		time.Sleep(time.Duration(waitSeconds) * time.Second)
 		goto retry
 	}
 
-	defer client.rateLimit.Reserved()
+	defer client.rateLimit.Unclaim()
 
 	authorizationResponse, err := client.validateToken()
 	if err != nil {

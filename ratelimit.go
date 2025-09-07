@@ -16,31 +16,31 @@ const (
 // RateLimit is the struct used for the `RateLimiting` global that is
 // updated after every request.
 type RateLimit struct {
-	lock          sync.RWMutex
-	RequestTime   time.Time
-	WindowShort   string
-	WindowLong    string
-	LimitShort    int
-	LimitLong     int
-	UsageShort    int
-	UsageLong     int
-	UsageReserved int
+	lock         sync.RWMutex
+	RequestTime  time.Time
+	WindowShort  string
+	WindowLong   string
+	LimitShort   int
+	LimitLong    int
+	UsageShort   int
+	UsageLong    int
+	UsageClaimed int
 }
 
-// Exceeded should be called as `strava.RateLimiting.Exceeded() to determine if the most recent
-// request exceeded the rate limit
-// If the rate limit is not exceeded, 1 unit is reserved for the call you are going to execute.
-// In that case you should call the Reserved-function by defer.
-func (rl *RateLimit) Exceeded() bool {
+// ExceededAndClaim should be called as `strava.RateLimiting.ExceededAndClaim() to determine if the most recent
+// request exceeded the rate limit. The function returns the number of seconds to wait for the rate-limit to be released again.
+// If the rate limit is not exceeded, directly claim 1 rate-limit unit for the actual APi call you are going to execute.
+// When that API call has finished, unclaim the unit by calling the Unclaim function.
+// This is necessary if we do parallel calls to the client.
+// Otherwise, in the time between the Exceeded function returned false and the actual execution of the API call, the rate-limit could have reached the Exceeded state, so that we get a 429 response, although Exceeded returned false a fraction earlier.
+func (rl *RateLimit) ExceededAndClaim() int {
 	rl.lock.RLock()
 	defer rl.lock.RUnlock()
 
-	exceeded := false
-
-	now := time.Now()
-	minute := now.Minute()
-	currentWindowShort := fmt.Sprintf("%v-%v", now.Hour(), minute-minute%windowShortMinutes)
-	currentWindowLong := now.Format("2006-01-02")
+	nowUtc := time.Now().UTC()
+	minute := nowUtc.Minute()
+	currentWindowShort := fmt.Sprintf("%v-%v", nowUtc.Hour(), minute-minute%windowShortMinutes)
+	currentWindowLong := nowUtc.Format("2006-01-02")
 
 	if currentWindowShort != rl.WindowShort {
 		rl.WindowShort = currentWindowShort
@@ -53,19 +53,18 @@ func (rl *RateLimit) Exceeded() bool {
 	}
 
 	if !rl.RequestTime.IsZero() {
-		if rl.UsageShort+rl.UsageReserved >= rl.LimitShort {
-			exceeded = true
-		} else if rl.UsageLong+rl.UsageReserved >= rl.LimitLong {
-			exceeded = true
+		if rl.UsageShort+rl.UsageClaimed >= rl.LimitShort {
+			windowShortSeconds := windowShortMinutes * 60
+			return 5 + windowShortSeconds - (nowUtc.Minute()*60+nowUtc.Second())%windowShortSeconds
+		} else if rl.UsageLong+rl.UsageClaimed >= rl.LimitLong {
+			return 5 + 24*60*60 - (nowUtc.Hour()*60*60 + nowUtc.Minute()*60 + nowUtc.Second())
 		}
 	}
 
-	if !exceeded {
-		rl.UsageReserved++
-	}
+	rl.UsageClaimed++
 
-	// fmt.Printf("Limit for window %s: %v+%v/%v, %v+%v/%v\n", rl.WindowShort, rl.UsageShort, rl.UsageReserved, rl.LimitShort, rl.UsageLong, rl.UsageReserved, rl.LimitLong)
-	return exceeded
+	//fmt.Printf("Limit for window %s: %v+%v/%v, %v+%v/%v\n", rl.WindowShort, rl.UsageShort, rl.UsageClaimed, rl.LimitShort, rl.UsageLong, rl.UsageClaimed, rl.LimitLong)
+	return 0
 }
 
 // FractionReached returns the current faction of rate used. The greater of the
@@ -131,9 +130,9 @@ func (rl *RateLimit) clear() {
 	rl.UsageLong = 0
 }
 
-func (rl *RateLimit) Reserved() {
+func (rl *RateLimit) Unclaim() {
 	rl.lock.RLock()
 	defer rl.lock.RUnlock()
 
-	rl.UsageReserved--
+	rl.UsageClaimed--
 }
