@@ -58,8 +58,12 @@ func (client *Client) validateToken() (*AuthorizationResponse, error) {
 		return nil, err
 	}
 
+	if authorizationResponse.AccessToken == "" && authorizationResponse.RefreshToken == "" {
+		return nil, errors.New("accesstoken and refreshtoken are empty")
+	}
+	
 	if authorizationResponse.AccessToken == "" {
-		return nil, errors.New("accesstoken is empty string")
+		return client.refreshToken()
 	}
 
 	expiresAt := time.UnixMicro(authorizationResponse.ExpiresAt * 1000)
