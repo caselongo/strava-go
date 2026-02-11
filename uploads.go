@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
@@ -41,10 +40,10 @@ var FileDataTypes = struct {
 
 var errorHandler ErrorHandler = func(response *http.Response) error {
 	if response.StatusCode == 400 {
-		contents, _ := ioutil.ReadAll(response.Body)
+		contents, _ := io.ReadAll(response.Body)
 		var e UploadSummary
 		json.Unmarshal(contents, &e)
-		return Error{e.Error, nil}
+		return Error{response.StatusCode, e.Error, nil}
 	} else {
 		return defaultErrorHandler(response)
 	}

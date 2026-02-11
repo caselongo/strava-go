@@ -41,6 +41,8 @@ var defaultErrorHandler ErrorHandler = func(resp *http.Response) error {
 			return err
 		}
 
+		response.StatusCode = resp.StatusCode
+
 		return response
 	}
 
@@ -61,7 +63,7 @@ func (client *Client) validateToken() (*AuthorizationResponse, error) {
 	if authorizationResponse.AccessToken == "" && authorizationResponse.RefreshToken == "" {
 		return nil, errors.New("accesstoken and refreshtoken are empty")
 	}
-	
+
 	if authorizationResponse.AccessToken == "" {
 		return client.refreshToken()
 	}

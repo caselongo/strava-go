@@ -5,8 +5,9 @@ import (
 )
 
 type Error struct {
-	Message string           `json:"message"`
-	Errors  []*ErrorDetailed `json:"errors"`
+	StatusCode int              `json:"status_code"`
+	Message    string           `json:"message"`
+	Errors     []*ErrorDetailed `json:"errors"`
 }
 
 type ErrorDetailed struct {
